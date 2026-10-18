@@ -51,17 +51,15 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
 
       <div className="flex flex-col">
         <span
-          className={`font-bold tracking-wide leading-tight ${
-            isDark ? 'text-white' : 'text-slate-900'
-          } ${size === 'lg' ? 'text-xl' : size === 'sm' ? 'text-sm' : 'text-[17px]'}`}
+          className={`font-bold tracking-wide leading-tight ${isDark ? 'text-white' : 'text-slate-900'
+            } ${size === 'lg' ? 'text-xl' : size === 'sm' ? 'text-sm' : 'text-[17px]'}`}
         >
           GENDOC
         </span>
         {showSubtitle && (
           <span
-            className={`font-medium tracking-wider uppercase leading-tight mt-0.5 ${
-              isDark ? 'text-slate-400' : 'text-blue-600'
-            } ${size === 'lg' ? 'text-xs' : 'text-[10.5px]'}`}
+            className={`font-medium tracking-wider uppercase leading-tight mt-0.5 ${isDark ? 'text-slate-400' : 'text-blue-600'
+              } ${size === 'lg' ? 'text-xs' : 'text-[10.5px]'}`}
           >
             ACM- NIT SURAT
           </span>

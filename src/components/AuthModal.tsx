@@ -1,12 +1,8 @@
 import React, { useState } from 'react';
 import { BrandLogo } from './BrandLogo';
-import { User, UserRole } from '../types';
-import {
-  findUserByEmail,
-  saveRegisteredUser,
-  setActiveSessionUser,
-  DEFAULT_DEMO_USER,
-} from '../utils/storage';
+import { User } from '../types';
+import { DEFAULT_DEMO_USER } from '../utils/storage';
+import { ApiError, api, toUser } from '../api/client';
 import {
   Lock,
   Mail,
@@ -29,13 +25,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onAuthenticated }) => {
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [role, setRole] = useState<UserRole>('Club Member');
+  const [submitting, setSubmitting] = useState(false);
   const [missingAccountError, setMissingAccountError] = useState<string | null>(null);
   const [generalError, setGeneralError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  const handleSignIn = (e: React.FormEvent) => {
+  const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
     setMissingAccountError(null);
     setGeneralError(null);
 
@@ -50,29 +47,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onAuthenticated }) => {
       return;
     }
 
-    // Check if account exists
-    const existingUser = findUserByEmail(trimmedEmail);
-
-    if (!existingUser) {
-      setMissingAccountError(
-        'No account found for this email. Please create a new account to access GENDOC (ACM- NIT SURAT).'
-      );
-      return;
+    setSubmitting(true);
+    try {
+      const user = await api.auth.login(trimmedEmail, password);
+      onAuthenticated(toUser(user));
+    } catch (err) {
+      setGeneralError(err instanceof ApiError ? err.message : 'Could not sign in. Please try again.');
+    } finally {
+      setSubmitting(false);
     }
-
-    // Check password if set (for demo ease, allow default password or matching)
-    if (existingUser.password && existingUser.password !== password) {
-      setGeneralError('Invalid password. Please check your credentials.');
-      return;
-    }
-
-    // Successful sign in
-    setActiveSessionUser(existingUser);
-    onAuthenticated(existingUser);
   };
 
-  const handleSignUp = (e: React.FormEvent) => {
+  const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
     setMissingAccountError(null);
     setGeneralError(null);
 
@@ -86,8 +74,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onAuthenticated }) => {
       return;
     }
 
-    if (password.length < 6) {
-      setGeneralError('Password should be at least 6 characters.');
+    if (password.length < 8) {
+      setGeneralError('Password should be at least 8 characters.');
       return;
     }
 
@@ -96,28 +84,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onAuthenticated }) => {
       return;
     }
 
-    const existingUser = findUserByEmail(email.trim());
-    if (existingUser) {
-      setGeneralError('An account with this email already exists. Please sign in instead.');
-      return;
+    setSubmitting(true);
+    try {
+      const user = await api.auth.signup(fullName.trim(), email.trim(), password);
+      setSuccessMessage('Account created successfully! Entering workspace...');
+      setTimeout(() => onAuthenticated(toUser(user)), 600);
+    } catch (err) {
+      setGeneralError(err instanceof ApiError ? err.message : 'Could not create the account. Please try again.');
+    } finally {
+      setSubmitting(false);
     }
-
-    const newUser: User = {
-      id: `usr_${Date.now()}`,
-      name: fullName.trim(),
-      email: email.trim().toLowerCase(),
-      role,
-      password,
-      avatarInitial: fullName.trim().charAt(0).toUpperCase() || 'U',
-      createdAt: new Date().toISOString(),
-    };
-
-    saveRegisteredUser(newUser);
-    setActiveSessionUser(newUser);
-    setSuccessMessage('Account created successfully! Entering workspace...');
-    setTimeout(() => {
-      onAuthenticated(newUser);
-    }, 600);
   };
 
   const handleDemoFill = () => {
@@ -350,16 +326,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onAuthenticated }) => {
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
                       Club Role
                     </label>
-                    <select
-                      value={role}
-                      onChange={(e) => setRole(e.target.value as UserRole)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
-                    >
-                      <option value="Club Member">Club Member</option>
-                      <option value="Core Coordinator">Core Coordinator</option>
-                      <option value="Club Admin">Club Admin</option>
-                      <option value="Faculty Advisor">Faculty Advisor</option>
-                    </select>
+                    <div className="w-full bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-600">
+                      Club Member
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-1">New accounts start as Club Member.</p>
                   </div>
                 </div>
 

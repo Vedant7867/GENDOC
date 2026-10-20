@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   FileText,
   LayoutGrid,
@@ -8,9 +8,13 @@ import {
   List,
   MoreVertical,
   MoreHorizontal,
+  ChevronLeft,
   X,
 } from 'lucide-react';
-import { ClubDocument, DocumentStatus } from '../types';
+import { ClubDocument, DocumentStatus, IconColorTheme, User } from '../types';
+import { ApiError, api, toClubDocument } from '../api/client';
+import { canCreate, canDelete, statusActions } from '../api/permissions';
+import type { ApiDocument, ApiDocumentList } from '../api/types';
 
 // --- Custom SVGs for 100% Pixel Accuracy ---
 
@@ -106,12 +110,11 @@ export const PdfBadgeIcon = ({ onClick }: { onClick?: (e: React.MouseEvent) => v
   </button>
 );
 
-// --- Dataset Matching Specification 1:1 ---
+// --- Folder cards (counts come from GET /documents/folders) ---
 
 export interface FolderCategory {
   id: number;
   title: string;
-  count: string;
   bgClass: string;
   borderClass: string;
   badgeBg: string;
@@ -125,7 +128,6 @@ export const FOLDER_CATEGORIES: FolderCategory[] = [
   {
     id: 1,
     title: 'Event Proposals',
-    count: '12 documents',
     bgClass: 'bg-[#EEF5FF]',
     borderClass: 'border-blue-100/80',
     badgeBg: 'bg-[#BFDBFE]',
@@ -137,7 +139,6 @@ export const FOLDER_CATEGORIES: FolderCategory[] = [
   {
     id: 2,
     title: 'Permission Letters',
-    count: '8 documents',
     bgClass: 'bg-[#FFF4EA]',
     borderClass: 'border-orange-100/80',
     badgeBg: 'bg-[#FED7AA]',
@@ -149,7 +150,6 @@ export const FOLDER_CATEGORIES: FolderCategory[] = [
   {
     id: 3,
     title: 'Event Notices',
-    count: '10 documents',
     bgClass: 'bg-[#ECFDF3]',
     borderClass: 'border-emerald-100/80',
     badgeBg: 'bg-[#A7F3D0]',
@@ -161,7 +161,6 @@ export const FOLDER_CATEGORIES: FolderCategory[] = [
   {
     id: 4,
     title: 'Budget Estimates',
-    count: '6 documents',
     bgClass: 'bg-[#F4F0FF]',
     borderClass: 'border-purple-100/80',
     badgeBg: 'bg-[#DDD6FE]',
@@ -172,245 +171,265 @@ export const FOLDER_CATEGORIES: FolderCategory[] = [
   },
   {
     id: 5,
-    title: 'Participation Certs',
-    count: '7 documents',
+    title: 'Participation Certificates',
     bgClass: 'bg-[#FFF0F0]',
     borderClass: 'border-rose-100/80',
     badgeBg: 'bg-[#FECDD3]',
     badgeText: 'text-[#9F1239]',
     folderBack: '#E11D48',
     folderFront: '#FDA4AF',
-    filterType: 'Participation Cert',
+    filterType: 'Participation Certificate',
   },
 ];
 
-export interface DocumentRow {
-  id: string;
-  name: string;
-  iconTheme: 'blue' | 'orange' | 'green' | 'purple';
-  type: 'Permission Letter' | 'Event Proposal' | 'Budget Estimate' | 'Event Notice';
-  event: string;
-  lastModified: string;
-  status: 'Needs Review' | 'Approved' | 'Draft';
-  formats: ('DOCX' | 'PDF')[];
-}
+const PAGE_SIZE = 20;
+type SortOrder = 'recent' | 'name';
 
-export const DOCUMENTS_DATA: DocumentRow[] = [
-  {
-    id: '1',
-    name: 'Web Development Workshop - Permission Letter',
-    iconTheme: 'blue',
-    type: 'Permission Letter',
-    event: 'Web Development Workshop',
-    lastModified: '10 Oct 2026, 4:21 PM',
-    status: 'Needs Review',
-    formats: ['DOCX', 'PDF'],
-  },
-  {
-    id: '2',
-    name: 'Tech Fest 2026 - Prize Money Proposal',
-    iconTheme: 'orange',
-    type: 'Event Proposal',
-    event: 'Tech Fest 2026',
-    lastModified: '8 Oct 2026, 1:12 PM',
-    status: 'Approved',
-    formats: ['DOCX', 'PDF'],
-  },
-  {
-    id: '3',
-    name: 'AI Workshop - Event Proposal',
-    iconTheme: 'green',
-    type: 'Event Proposal',
-    event: 'AI Workshop',
-    lastModified: '5 Oct 2026, 6:45 PM',
-    status: 'Approved',
-    formats: ['DOCX', 'PDF'],
-  },
-  {
-    id: '4',
-    name: 'Cultural Event - Budget Estimate',
-    iconTheme: 'purple',
-    type: 'Budget Estimate',
-    event: 'Cultural Event 2026',
-    lastModified: '2 Oct 2026, 11:20 AM',
-    status: 'Draft',
-    formats: ['DOCX'],
-  },
-  {
-    id: '5',
-    name: 'Coding Bootcamp - Event Notice',
-    iconTheme: 'green',
-    type: 'Event Notice',
-    event: 'Coding Bootcamp',
-    lastModified: '28 Sept 2026, 3:10 PM',
-    status: 'Approved',
-    formats: ['DOCX', 'PDF'],
-  },
-  {
-    id: '6',
-    name: 'ML Seminar - Permission Letter',
-    iconTheme: 'blue',
-    type: 'Permission Letter',
-    event: 'ML Seminar',
-    lastModified: '20 Sept 2026, 2:05 PM',
-    status: 'Needs Review',
-    formats: ['DOCX'],
-  },
-  {
-    id: '7',
-    name: 'Hackathon 2026 - Budget Estimate',
-    iconTheme: 'purple',
-    type: 'Budget Estimate',
-    event: 'Hackathon 2026',
-    lastModified: '18 Sept 2026, 5:40 PM',
-    status: 'Draft',
-    formats: ['DOCX'],
-  },
-  {
-    id: '8',
-    name: 'Design Workshop - Event Notice',
-    iconTheme: 'green',
-    type: 'Event Notice',
-    event: 'Design Workshop',
-    lastModified: '15 Sept 2026, 12:18 PM',
-    status: 'Approved',
-    formats: ['DOCX', 'PDF'],
-  },
-];
+const ICON_CLASSES: Record<IconColorTheme, string> = {
+  blue: 'bg-blue-50 text-blue-600 border-blue-200/60',
+  amber: 'bg-amber-50 text-amber-600 border-amber-200/60',
+  emerald: 'bg-emerald-50 text-emerald-600 border-emerald-200/60',
+  purple: 'bg-purple-50 text-purple-600 border-purple-200/60',
+  indigo: 'bg-indigo-50 text-indigo-600 border-indigo-200/60',
+};
+
+const TYPE_BADGE: Record<string, string> = {
+  'Permission Letter': 'bg-[#CBD5E1]/80 text-slate-800',
+  'Event Proposal': 'bg-[#93C5FD]/85 text-slate-900',
+  'Budget Estimate': 'bg-[#C4B5FD]/85 text-slate-900',
+  'Event Notice': 'bg-[#A7F3D0]/90 text-slate-900',
+  'Participation Certificate': 'bg-[#FECDD3]/90 text-slate-900',
+};
+
+const STATUS_BADGE: Record<DocumentStatus, string> = {
+  'Needs Review': 'bg-[#FDE08D] text-slate-900',
+  Completed: 'bg-[#52D681] text-slate-900',
+  Draft: 'bg-[#64748B] text-white',
+};
+
+const formatModified = (iso: string) =>
+  new Date(iso).toLocaleString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+
+const messageOf = (e: unknown) =>
+  e instanceof ApiError || e instanceof Error ? e.message : 'Something went wrong. Please try again.';
+
+const countLabel = (n: number) => `${n} document${n === 1 ? '' : 's'}`;
 
 interface DocumentsViewProps {
   searchQuery: string;
+  currentUser: User;
+  /** Bump this number to make the page reload (App does it after any change made elsewhere). */
+  reloadToken: number;
   onGenerateDocument: () => void;
-  onPreviewDocument: (doc: ClubDocument) => void;
+  onOpenDocument: (doc: ClubDocument) => void;
+  /** Called after this page changes something (status, delete, duplicate) so other screens can refresh. */
+  onChanged: () => void;
 }
 
 export const DocumentsView: React.FC<DocumentsViewProps> = ({
   searchQuery,
+  currentUser,
+  reloadToken,
   onGenerateDocument,
-  onPreviewDocument,
+  onOpenDocument,
+  onChanged,
 }) => {
   const [selectedFolderType, setSelectedFolderType] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
-  const [sortOrder, setSortOrder] = useState<'recent' | 'name'>('recent');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('recent');
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [debouncedQuery, setDebouncedQuery] = useState(searchQuery.trim());
 
-  const getDocIconClasses = (theme: DocumentRow['iconTheme']) => {
-    switch (theme) {
-      case 'blue':
-        return 'bg-blue-50 text-blue-600 border-blue-200/60';
-      case 'orange':
-        return 'bg-amber-50 text-amber-600 border-amber-200/60';
-      case 'green':
-        return 'bg-emerald-50 text-emerald-600 border-emerald-200/60';
-      case 'purple':
-        return 'bg-purple-50 text-purple-600 border-purple-200/60';
-    }
-  };
+  const [data, setData] = useState<ApiDocumentList | null>(null);
+  const [folderCounts, setFolderCounts] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  const getTypeBadgeClasses = (type: DocumentRow['type']) => {
-    switch (type) {
-      case 'Permission Letter':
-        return 'bg-[#CBD5E1]/80 text-slate-800';
-      case 'Event Proposal':
-        return 'bg-[#93C5FD]/85 text-slate-900';
-      case 'Budget Estimate':
-        return 'bg-[#C4B5FD]/85 text-slate-900';
-      case 'Event Notice':
-        return 'bg-[#A7F3D0]/90 text-slate-900';
-    }
-  };
+  // Search runs on the server; wait for a pause in typing before asking.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(searchQuery.trim()), 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
 
-  const getStatusBadgeClasses = (status: DocumentRow['status']) => {
-    switch (status) {
-      case 'Needs Review':
-        return 'bg-[#FDE08D] text-slate-900';
-      case 'Approved':
-        return 'bg-[#52D681] text-slate-900';
-      case 'Draft':
-        return 'bg-[#64748B] text-white';
-    }
-  };
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedQuery, selectedFolderType, sortOrder]);
 
-  const filteredDocuments = DOCUMENTS_DATA.filter((doc) => {
-    const matchesSearch =
-      doc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      doc.event.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      doc.type.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesFolder = selectedFolderType ? doc.type === selectedFolderType : true;
-    return matchesSearch && matchesFolder;
-  });
-
-  const handleRowClick = (doc: DocumentRow) => {
-    // Map to ClubDocument interface for preview
-    const mapped: ClubDocument = {
-      id: doc.id,
-      title: doc.name,
-      templateType: doc.type,
-      status: doc.status === 'Approved' ? 'Completed' : doc.status,
-      lastEditedText: doc.lastModified,
-      lastEditedDate: new Date().toISOString(),
-      iconTheme: doc.iconTheme === 'orange' ? 'amber' : doc.iconTheme === 'green' ? 'emerald' : doc.iconTheme,
-      venue: 'Seminar Hall, SVNIT Surat',
-      eventDate: 'October 2026',
-      expectedAttendance: '120 students',
-      budgetTotal: doc.type === 'Budget Estimate' ? '₹24,500' : 'Approved Fund',
-      summary: `Official ${doc.type} record for ${doc.event} under the ACM NIT Surat student committee charter.`,
-      organizer: 'Kristal Patel (Tech Lead)',
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    api.documents
+      .list({
+        q: debouncedQuery || undefined,
+        templateType: selectedFolderType ?? undefined,
+        sort: sortOrder === 'recent' ? '-updatedAt' : 'title',
+        page,
+        limit: PAGE_SIZE,
+      })
+      .then((r) => {
+        if (cancelled) return;
+        setData(r);
+        setLoadError(null);
+      })
+      .catch((e) => {
+        if (!cancelled) setLoadError(messageOf(e));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
     };
-    onPreviewDocument(mapped);
+  }, [debouncedQuery, selectedFolderType, sortOrder, page, reloadToken, retry]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.documents
+      .folders()
+      .then((r) => {
+        if (!cancelled) setFolderCounts(Object.fromEntries(r.folders.map((f) => [f.templateType, f.count])));
+      })
+      .catch(() => {
+        /* folder counts are decoration; the list shows any real error */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadToken]);
+
+  // After deleting the last row of a page, step back instead of showing an empty page.
+  useEffect(() => {
+    if (data && data.items.length === 0 && page > 1) setPage((p) => p - 1);
+  }, [data, page]);
+
+  const docs: ApiDocument[] = data?.items ?? [];
+  const total = data?.total ?? 0;
+  const from = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const to = Math.min(page * PAGE_SIZE, total);
+
+  const run = async (doc: ApiDocument, action: () => Promise<unknown>) => {
+    setActiveMenuId(null);
+    setActionError(null);
+    setBusyId(doc.id);
+    try {
+      await action();
+      onChanged();
+    } catch (e) {
+      setActionError(messageOf(e));
+    } finally {
+      setBusyId(null);
+    }
   };
 
-  const handleDownloadFormat = (doc: DocumentRow, format: 'DOCX' | 'PDF', e: React.MouseEvent) => {
+  const handleDelete = (doc: ApiDocument) => {
+    if (!window.confirm(`Delete "${doc.title}"?`)) {
+      setActiveMenuId(null);
+      return;
+    }
+    void run(doc, () => api.documents.remove(doc.id));
+  };
+
+  const handleDownload = async (doc: ApiDocument, format: 'docx' | 'pdf', e: React.MouseEvent) => {
     e.stopPropagation();
-    const content = `===============================================================
-SARDAR VALLABHBHAI NATIONAL INSTITUTE OF TECHNOLOGY, SURAT
-ACM STUDENT CHAPTER (GENDOC AUTOMATED DOCUMENT ENGINE)
-===============================================================
-DOCUMENT: ${doc.name}
-TYPE: ${doc.type}
-EVENT: ${doc.event}
-LAST MODIFIED: ${doc.lastModified}
-STATUS: ${doc.status}
-FORMAT: ${format}
-
-AUTHORIZED SIGNATORIES:
-1. Faculty Advisor, ACM SVNIT Chapter
-2. Lead Coordinator (Kristal Patel)
-===============================================================`;
-
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${doc.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.${format.toLowerCase()}`;
-    link.click();
-    URL.revokeObjectURL(url);
+    setActiveMenuId(null);
+    setActionError(null);
+    try {
+      await api.documents.download(doc.id, format, doc.title);
+    } catch (err) {
+      setActionError(messageOf(err));
+    }
   };
+
+  const open = (doc: ApiDocument) => onOpenDocument(toClubDocument(doc));
+
+  const renderMenu = (doc: ApiDocument) => {
+    const actions = statusActions(currentUser, doc);
+    const itemClass = 'w-full px-3 py-1.5 text-left text-slate-700 hover:bg-slate-50';
+    return (
+      <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-xl shadow-xl border border-slate-100 py-1.5 z-30 text-left text-xs animate-fadeIn">
+        <button type="button" onClick={() => { setActiveMenuId(null); open(doc); }} className={`${itemClass} font-medium`}>
+          Open document
+        </button>
+        <button type="button" onClick={(e) => handleDownload(doc, 'docx', e)} className={itemClass}>
+          Download DOCX
+        </button>
+        <button type="button" onClick={(e) => handleDownload(doc, 'pdf', e)} className={itemClass}>
+          Download PDF
+        </button>
+        {canCreate(currentUser) && (
+          <button type="button" onClick={() => run(doc, () => api.documents.duplicate(doc.id))} className={itemClass}>
+            Duplicate
+          </button>
+        )}
+        {actions.length > 0 && <div className="my-1 border-t border-slate-100" />}
+        {actions.map((a) => (
+          <button
+            key={a.status}
+            type="button"
+            onClick={() => run(doc, () => api.documents.patch(doc.id, { status: a.status }))}
+            className={itemClass}
+          >
+            {a.label}
+          </button>
+        ))}
+        {canDelete(currentUser, doc) && (
+          <>
+            <div className="my-1 border-t border-slate-100" />
+            <button type="button" onClick={() => handleDelete(doc)} className="w-full px-3 py-1.5 text-left text-rose-600 hover:bg-rose-50">
+              Delete
+            </button>
+          </>
+        )}
+      </div>
+    );
+  };
+
+  const emptyMessage =
+    debouncedQuery || selectedFolderType
+      ? 'No documents match your search or filter.'
+      : 'No documents yet. Use "Generate Document" to create your first one.';
 
   return (
     <div className="space-y-5 animate-fadeIn">
       {/* Page Title & Primary CTA */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[28px] font-bold text-slate-900 tracking-tight leading-tight">
-            Documents
-          </h1>
-          <p className="text-[13.5px] text-slate-500 mt-0.5">
-            Your generated documents, organised by type.
-          </p>
+          <h1 className="text-[28px] font-bold text-slate-900 tracking-tight leading-tight">Documents</h1>
+          <p className="text-[13.5px] text-slate-500 mt-0.5">Your generated documents, organised by type.</p>
         </div>
 
-        <button
-          type="button"
-          onClick={onGenerateDocument}
-          className="bg-[#1D63DC] hover:bg-blue-700 text-white text-[13.5px] font-semibold px-4 py-2.5 rounded-xl shadow-xs flex items-center gap-2 transition-all cursor-pointer"
-        >
-          <Plus size={17} strokeWidth={2.5} />
-          <span>Generate Document</span>
-        </button>
+        {canCreate(currentUser) && (
+          <button
+            type="button"
+            onClick={onGenerateDocument}
+            className="bg-[#1D63DC] hover:bg-blue-700 text-white text-[13.5px] font-semibold px-4 py-2.5 rounded-xl shadow-xs flex items-center gap-2 transition-all cursor-pointer"
+          >
+            <Plus size={17} strokeWidth={2.5} />
+            <span>Generate Document</span>
+          </button>
+        )}
       </div>
 
-      {/* 5 FOLDER CATEGORY CARDS CONTAINER */}
+      {actionError && (
+        <div role="alert" className="flex items-start justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-[13px] text-rose-800">
+          <span>{actionError}</span>
+          <button type="button" onClick={() => setActionError(null)} aria-label="Dismiss">
+            <X size={15} />
+          </button>
+        </div>
+      )}
+
+      {/* FOLDER CATEGORY CARDS */}
       <div className="bg-white rounded-2xl border border-slate-200/70 p-4 shadow-sm">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
           {FOLDER_CATEGORIES.map((folder) => {
@@ -418,14 +437,11 @@ AUTHORIZED SIGNATORIES:
             return (
               <div
                 key={folder.id}
-                onClick={() =>
-                  setSelectedFolderType(isSelected ? null : folder.filterType)
-                }
+                onClick={() => setSelectedFolderType(isSelected ? null : folder.filterType)}
                 className={`${folder.bgClass} ${folder.borderClass} ${
                   isSelected ? 'ring-2 ring-blue-500 shadow-sm' : ''
                 } border rounded-xl p-4 flex flex-col justify-between min-h-[116px] cursor-pointer hover:shadow-sm transition-all select-none`}
               >
-                {/* Top Row: 2-Tone Folder Icon + Number Badge */}
                 <div className="flex items-start justify-between">
                   <TwoToneFolderIcon backColor={folder.folderBack} frontColor={folder.folderFront} />
                   <span
@@ -435,14 +451,11 @@ AUTHORIZED SIGNATORIES:
                   </span>
                 </div>
 
-                {/* Bottom Row: Title, Count, Chevron */}
                 <div className="flex items-end justify-between mt-3.5">
                   <div>
-                    <div className="text-[14px] font-bold text-slate-900 leading-snug">
-                      {folder.title}
-                    </div>
+                    <div className="text-[14px] font-bold text-slate-900 leading-snug">{folder.title}</div>
                     <div className="text-[12px] text-slate-600 font-medium mt-0.5">
-                      {folder.count}
+                      {countLabel(folderCounts[folder.filterType] ?? 0)}
                     </div>
                   </div>
                   <ChevronRight className="text-slate-700 mb-1 shrink-0" size={16} />
@@ -470,15 +483,12 @@ AUTHORIZED SIGNATORIES:
         </div>
 
         <div className="flex items-center gap-3">
-          {/* List / Grid Toggle */}
           <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5">
             <button
               type="button"
               onClick={() => setViewMode('list')}
               className={`p-1.5 rounded-md transition-colors ${
-                viewMode === 'list'
-                  ? 'bg-[#E2E8F0]/80 text-slate-800'
-                  : 'text-slate-500 hover:text-slate-800'
+                viewMode === 'list' ? 'bg-[#E2E8F0]/80 text-slate-800' : 'text-slate-500 hover:text-slate-800'
               }`}
               title="List View"
             >
@@ -488,9 +498,7 @@ AUTHORIZED SIGNATORIES:
               type="button"
               onClick={() => setViewMode('grid')}
               className={`p-1.5 rounded-md transition-colors ${
-                viewMode === 'grid'
-                  ? 'bg-[#E2E8F0]/80 text-slate-800'
-                  : 'text-slate-500 hover:text-slate-800'
+                viewMode === 'grid' ? 'bg-[#E2E8F0]/80 text-slate-800' : 'text-slate-500 hover:text-slate-800'
               }`}
               title="Grid View"
             >
@@ -498,7 +506,6 @@ AUTHORIZED SIGNATORIES:
             </button>
           </div>
 
-          {/* Sort Dropdown */}
           <button
             type="button"
             onClick={() => setSortOrder(sortOrder === 'recent' ? 'name' : 'recent')}
@@ -510,15 +517,25 @@ AUTHORIZED SIGNATORIES:
         </div>
       </div>
 
-      {/* ALL DOCUMENTS LIST TABLE */}
-      {viewMode === 'list' ? (
+      {loadError ? (
+        <div className="bg-white rounded-2xl border border-rose-200 p-8 text-center">
+          <p className="text-[13.5px] text-rose-700">{loadError}</p>
+          <button
+            type="button"
+            onClick={() => setRetry((r) => r + 1)}
+            className="mt-3 px-4 py-2 rounded-lg bg-[#1D63DC] text-white text-[13px] font-semibold hover:bg-blue-700"
+          >
+            Try again
+          </button>
+        </div>
+      ) : viewMode === 'list' ? (
         <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-slate-100 text-[12px] font-semibold text-slate-600 bg-[#FAFBFD]">
                 <th className="py-3.5 pl-5 pr-3 w-[31%]">Name</th>
                 <th className="py-3.5 px-3 w-[16%]">Type</th>
-                <th className="py-3.5 px-3 w-[18%]">Event</th>
+                <th className="py-3.5 px-3 w-[18%]">Event Date</th>
                 <th className="py-3.5 px-3 w-[15%]">Last Modified</th>
                 <th className="py-3.5 px-3 w-[11%]">Status</th>
                 <th className="py-3.5 px-3 w-[7%]">Formats</th>
@@ -528,170 +545,161 @@ AUTHORIZED SIGNATORIES:
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-[13px]">
-              {filteredDocuments.map((doc) => (
-                <tr
-                  key={doc.id}
-                  onClick={() => handleRowClick(doc)}
-                  className="hover:bg-slate-50/80 transition-colors group cursor-pointer"
-                >
-                  {/* Name Column */}
-                  <td className="py-3 pl-5 pr-3">
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={`w-7 h-7 rounded-lg border flex items-center justify-center shrink-0 ${getDocIconClasses(
-                          doc.iconTheme
-                        )}`}
-                      >
-                        <FileText size={15} />
-                      </div>
-                      <span className="font-semibold text-slate-900 leading-snug group-hover:text-blue-600 transition-colors">
-                        {doc.name}
-                      </span>
-                    </div>
-                  </td>
-
-                  {/* Type Badge Column */}
-                  <td className="py-3 px-3">
-                    <span
-                      className={`inline-block px-3 py-1 rounded-full text-[11.5px] font-semibold ${getTypeBadgeClasses(
-                        doc.type
-                      )}`}
-                    >
-                      {doc.type}
-                    </span>
-                  </td>
-
-                  {/* Event Column */}
-                  <td className="py-3 px-3 text-slate-700 font-medium">
-                    {doc.event}
-                  </td>
-
-                  {/* Last Modified Column */}
-                  <td className="py-3 px-3 text-slate-700 font-medium whitespace-nowrap">
-                    {doc.lastModified}
-                  </td>
-
-                  {/* Status Badge Column */}
-                  <td className="py-3 px-3">
-                    <span
-                      className={`inline-block px-3 py-1 rounded-full text-[11.5px] font-semibold ${getStatusBadgeClasses(
-                        doc.status
-                      )}`}
-                    >
-                      {doc.status}
-                    </span>
-                  </td>
-
-                  {/* Formats Column (DOCX / PDF Mini Icons) */}
-                  <td className="py-3 px-3">
-                    <div className="flex items-center gap-1.5">
-                      {doc.formats.includes('DOCX') && (
-                        <DocxBadgeIcon onClick={(e) => handleDownloadFormat(doc, 'DOCX', e)} />
-                      )}
-                      {doc.formats.includes('PDF') && (
-                        <PdfBadgeIcon onClick={(e) => handleDownloadFormat(doc, 'PDF', e)} />
-                      )}
-                    </div>
-                  </td>
-
-                  {/* Three-dot Action Menu */}
-                  <td className="py-3 pl-2 pr-5 text-right" onClick={(e) => e.stopPropagation()}>
-                    <div className="relative inline-block">
-                      <button
-                        type="button"
-                        onClick={() => setActiveMenuId(activeMenuId === doc.id ? null : doc.id)}
-                        className="p-1 text-slate-500 hover:text-slate-900 rounded-md hover:bg-slate-100"
-                      >
-                        <MoreVertical size={16} />
-                      </button>
-
-                      {activeMenuId === doc.id && (
-                        <div className="absolute right-0 top-full mt-1 w-44 bg-white rounded-xl shadow-xl border border-slate-100 py-1.5 z-30 text-left text-xs animate-fadeIn">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setActiveMenuId(null);
-                              handleRowClick(doc);
-                            }}
-                            className="w-full px-3 py-1.5 text-slate-700 hover:bg-slate-50 font-medium"
-                          >
-                            Preview Document
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              setActiveMenuId(null);
-                              handleDownloadFormat(doc, 'DOCX', e);
-                            }}
-                            className="w-full px-3 py-1.5 text-slate-700 hover:bg-slate-50"
-                          >
-                            Download DOCX
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              setActiveMenuId(null);
-                              handleDownloadFormat(doc, 'PDF', e);
-                            }}
-                            className="w-full px-3 py-1.5 text-slate-700 hover:bg-slate-50"
-                          >
-                            Download PDF
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </td>
+              {loading && !data ? (
+                <tr>
+                  <td colSpan={7} className="py-10 text-center text-slate-500">Loading documents…</td>
                 </tr>
-              ))}
+              ) : docs.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-10 text-center text-slate-500">{emptyMessage}</td>
+                </tr>
+              ) : (
+                docs.map((doc) => (
+                  <tr
+                    key={doc.id}
+                    onClick={() => open(doc)}
+                    className={`hover:bg-slate-50/80 transition-colors group cursor-pointer ${
+                      busyId === doc.id ? 'opacity-50 pointer-events-none' : ''
+                    }`}
+                  >
+                    <td className="py-3 pl-5 pr-3">
+                      <div className="flex items-center gap-3">
+                        <div
+                          className={`w-7 h-7 rounded-lg border flex items-center justify-center shrink-0 ${
+                            ICON_CLASSES[toClubDocument(doc).iconTheme]
+                          }`}
+                        >
+                          <FileText size={15} />
+                        </div>
+                        <span className="font-semibold text-slate-900 leading-snug group-hover:text-blue-600 transition-colors">
+                          {doc.title}
+                        </span>
+                      </div>
+                    </td>
+
+                    <td className="py-3 px-3">
+                      <span
+                        className={`inline-block px-3 py-1 rounded-full text-[11.5px] font-semibold ${
+                          TYPE_BADGE[doc.templateType] ?? 'bg-slate-200 text-slate-800'
+                        }`}
+                      >
+                        {doc.templateType}
+                      </span>
+                    </td>
+
+                    <td className="py-3 px-3 text-slate-700 font-medium">{doc.eventDate ?? '—'}</td>
+
+                    <td className="py-3 px-3 text-slate-700 font-medium whitespace-nowrap">
+                      {formatModified(doc.updatedAt)}
+                    </td>
+
+                    <td className="py-3 px-3">
+                      <span
+                        className={`inline-block px-3 py-1 rounded-full text-[11.5px] font-semibold ${STATUS_BADGE[doc.status]}`}
+                      >
+                        {doc.status}
+                      </span>
+                    </td>
+
+                    <td className="py-3 px-3">
+                      <div className="flex items-center gap-1.5">
+                        <DocxBadgeIcon onClick={(e) => handleDownload(doc, 'docx', e)} />
+                        <PdfBadgeIcon onClick={(e) => handleDownload(doc, 'pdf', e)} />
+                      </div>
+                    </td>
+
+                    <td className="py-3 pl-2 pr-5 text-right" onClick={(e) => e.stopPropagation()}>
+                      <div className="relative inline-block">
+                        <button
+                          type="button"
+                          onClick={() => setActiveMenuId(activeMenuId === doc.id ? null : doc.id)}
+                          className="p-1 text-slate-500 hover:text-slate-900 rounded-md hover:bg-slate-100"
+                          aria-label="Document actions"
+                        >
+                          <MoreVertical size={16} />
+                        </button>
+                        {activeMenuId === doc.id && renderMenu(doc)}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
       ) : (
         /* GRID VIEW */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredDocuments.map((doc) => (
-            <div
-              key={doc.id}
-              onClick={() => handleRowClick(doc)}
-              className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-4 hover:border-blue-400 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between group"
-            >
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div
-                    className={`w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 ${getDocIconClasses(
-                      doc.iconTheme
-                    )}`}
-                  >
-                    <FileText size={16} />
+          {loading && !data ? (
+            <p className="col-span-full py-10 text-center text-slate-500">Loading documents…</p>
+          ) : docs.length === 0 ? (
+            <p className="col-span-full py-10 text-center text-slate-500">{emptyMessage}</p>
+          ) : (
+            docs.map((doc) => (
+              <div
+                key={doc.id}
+                onClick={() => open(doc)}
+                className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-4 hover:border-blue-400 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between group"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <div
+                      className={`w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 ${
+                        ICON_CLASSES[toClubDocument(doc).iconTheme]
+                      }`}
+                    >
+                      <FileText size={16} />
+                    </div>
+                    <span
+                      className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${STATUS_BADGE[doc.status]}`}
+                    >
+                      {doc.status}
+                    </span>
                   </div>
-                  <span
-                    className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${getStatusBadgeClasses(
-                      doc.status
-                    )}`}
-                  >
-                    {doc.status}
-                  </span>
+
+                  <h3 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors leading-snug">
+                    {doc.title}
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1">{doc.templateType}</p>
                 </div>
 
-                <h3 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors leading-snug">
-                  {doc.name}
-                </h3>
-                <p className="text-xs text-slate-500 mt-1">{doc.event}</p>
-              </div>
-
-              <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-                <span className="text-slate-400">{doc.lastModified}</span>
-                <div className="flex items-center gap-1.5">
-                  {doc.formats.includes('DOCX') && (
-                    <DocxBadgeIcon onClick={(e) => handleDownloadFormat(doc, 'DOCX', e)} />
-                  )}
-                  {doc.formats.includes('PDF') && (
-                    <PdfBadgeIcon onClick={(e) => handleDownloadFormat(doc, 'PDF', e)} />
-                  )}
+                <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+                  <span className="text-slate-400">{formatModified(doc.updatedAt)}</span>
+                  <div className="flex items-center gap-1.5">
+                    <DocxBadgeIcon onClick={(e) => handleDownload(doc, 'docx', e)} />
+                    <PdfBadgeIcon onClick={(e) => handleDownload(doc, 'pdf', e)} />
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            ))
+          )}
+        </div>
+      )}
+
+      {/* PAGINATION */}
+      {!loadError && total > PAGE_SIZE && (
+        <div className="flex items-center justify-between text-[12.5px] text-slate-600">
+          <span>
+            Showing {from}–{to} of {total}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => p - 1)}
+              className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+            >
+              <ChevronLeft size={14} /> Previous
+            </button>
+            <button
+              type="button"
+              disabled={to >= total}
+              onClick={() => setPage((p) => p + 1)}
+              className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+            >
+              Next <ChevronRight size={14} />
+            </button>
+          </div>
         </div>
       )}
     </div>

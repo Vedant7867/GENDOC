@@ -1,0 +1,19 @@
+/* Shared look of a document page (template preview and editor). Mirrors the print rules used for PDF export. */
+.gd-page { font-family: Georgia, 'Times New Roman', serif; color: #111827; line-height: 1.4; font-size: var(--gd-font, 12px); }
+.gd-page h1 { font-size: 1.45em; font-weight: 700; margin: 0.6em 0 0.4em; color: #0b132b; }
+.gd-page h2 { font-size: 1.2em; font-weight: 700; margin: 0.7em 0 0.35em; color: #0b132b; }
+.gd-page h3 { font-size: 1.05em; font-weight: 700; margin: 0.6em 0 0.3em; color: #1d4ed8; }
+.gd-page p { margin: 0.35em 0; }
+.gd-page ul { list-style: disc; padding-left: 1.4em; margin: 0.35em 0; }
+.gd-page ol { list-style: decimal; padding-left: 1.4em; margin: 0.35em 0; }
+.gd-page blockquote { border-left: 3px solid #cbd5e1; padding-left: 0.8em; color: #475569; margin: 0.5em 0; }
+.gd-page table { width: 100%; border-collapse: collapse; margin: 0.5em 0; table-layout: auto; }
+.gd-page th, .gd-page td { border: 1px solid #475569; padding: 0.3em 0.5em; vertical-align: top; text-align: left; }
+.gd-page th { background: #eef2f7; font-weight: 700; }
+.gd-page table.sig-table, .gd-page table.sig-table td { border: 0; }
+.gd-page hr.page-break { border: 0; border-top: 1px dashed #94a3b8; margin: 1.2em 0; position: relative; }
+.gd-page .field-empty { background: #fef3c7; color: #92400e; }
+.gd-page [data-ai="draft"] { background: #fef9c3; border-bottom: 1px dashed #ca8a04; }
+.gd-page .ProseMirror { outline: none; min-height: 60vh; }
+.gd-page .ProseMirror .selectedCell { background: #dbeafe; }
+.gd-page .ProseMirror p.is-editor-empty:first-child::before { content: attr(data-placeholder); color: #94a3b8; float: left; height: 0; pointer-events: none; }

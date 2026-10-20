@@ -1,0 +1,30 @@
+# Starts MongoDB and the API, seeds demo data, and serves http://localhost:8000/api (docs at /docs).
+services:
+  mongo:
+    image: mongo:7
+    volumes:
+      - mongo-data:/data/db
+
+  api:
+    build: .
+    depends_on:
+      - mongo
+    ports:
+      - "8000:8000"
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      DB_NAME: gendoc
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      CORS_ORIGINS: http://localhost:5173
+      # AI (optional; the API starts and non-AI features work without a key). Keys stay on the server.
+      GENDOC_LLM_PROVIDER: ${GENDOC_LLM_PROVIDER:-gemini}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GENDOC_LLM_MODEL: ${GENDOC_LLM_MODEL:-}
+      # The old Extraction/Form Wizard modals cannot supply official fields (faculty coordinator, budget).
+      # Set to "true" as soon as the generator sends complete fields (contract section 7).
+      ENFORCE_REQUIRED_FIELDS: "false"
+    # The seed is idempotent: it only writes when the database is empty.
+    command: sh -c "python -m app.seed && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+volumes:
+  mongo-data:

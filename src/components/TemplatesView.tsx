@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   FileText,
   Search,
@@ -12,8 +12,15 @@ import {
   FilePlus2,
   X,
   CheckCircle2,
+  AlertCircle,
+  Loader2,
+  Trash2,
 } from 'lucide-react';
 import { GendocStarLogo } from './BrandLogo';
+import { api, relativeTime } from '../api/client';
+import type { ApiTemplate } from '../api/types';
+import type { User } from '../types';
+import './documentPage.css';
 
 // --- Custom Brand & Document Header Wave SVGs ---
 
@@ -132,7 +139,7 @@ export const MiniTemplateThumbnail: React.FC<{
   </div>
 );
 
-// --- Dataset Matching Specification 1:1 ---
+// --- Template items shown on this page (mapped from GET /api/templates; nothing is bundled) ---
 
 export interface TemplateItem {
   id: string;
@@ -148,140 +155,128 @@ export interface TemplateItem {
   version: string;
   formats: string;
   isMostUsed?: boolean;
+  isSystem: boolean;
 }
 
-export const TEMPLATES_DATA: TemplateItem[] = [
-  {
-    id: 'event-proposal',
-    title: 'Event Proposal',
-    previewHeading: 'EVENT PROPOSAL',
-    description: 'For workshops, seminars and general events.',
-    usedCount: 24,
-    category: 'Permission Docs',
-    iconTheme: 'blue',
-    wireframeVariant: 'proposal-table',
-    createdBy: 'Club Admin',
-    lastUpdated: '10 Oct 2026',
-    version: 'v1.2',
-    formats: 'DOCX, PDF',
-    isMostUsed: true,
-  },
-  {
-    id: 'permission-letter',
-    title: 'Permission Letter',
-    previewHeading: 'PERMISSION LETTER',
-    description: 'To request venue, resources and other permissions.',
-    usedCount: 18,
-    category: 'Permission Docs',
-    iconTheme: 'orange',
-    wireframeVariant: 'letter',
-    createdBy: 'Club Admin',
-    lastUpdated: '08 Oct 2026',
-    version: 'v1.4',
-    formats: 'DOCX, PDF',
-    isMostUsed: true,
-  },
-  {
-    id: 'prize-money',
-    title: 'Prize Money Proposal',
-    previewHeading: 'PRIZE MONEY PROPOSAL',
-    description: 'For requesting prize money and budget approval.',
-    usedCount: 12,
-    category: 'Prize Money',
-    iconTheme: 'rose',
-    wireframeVariant: 'letter',
-    createdBy: 'Club Admin',
-    lastUpdated: '04 Oct 2026',
-    version: 'v1.1',
-    formats: 'DOCX, PDF',
-  },
-  {
-    id: 'submitted-document',
-    title: 'Submitted Document',
-    previewHeading: 'SUBMITTED DOCUMENT',
-    description: 'For final submission to authorities/committees.',
-    usedCount: 10,
-    category: 'Submitted',
-    iconTheme: 'green',
-    wireframeVariant: 'letter',
-    createdBy: 'Club Admin',
-    lastUpdated: '29 Sept 2026',
-    version: 'v1.0',
-    formats: 'DOCX, PDF',
-  },
-  {
-    id: 'bill-summary',
-    title: 'Bill Summary',
-    previewHeading: 'BILL SUMMARY',
-    description: 'Summary of expenses for the event.',
-    usedCount: 8,
-    category: 'Bill Summary',
-    iconTheme: 'purple',
-    wireframeVariant: 'bill-table',
-    createdBy: 'Club Admin',
-    lastUpdated: '22 Sept 2026',
-    version: 'v1.3',
-    formats: 'DOCX, PDF',
-  },
-  {
-    id: 'bill-certificate',
-    title: 'Bill Certificate',
-    previewHeading: 'BILL CERTIFICATE',
-    description: 'For reimbursement and financial records.',
-    usedCount: 7,
-    category: 'Bill Certificate',
-    iconTheme: 'rose',
-    wireframeVariant: 'bill-table',
-    createdBy: 'Club Admin',
-    lastUpdated: '15 Sept 2026',
-    version: 'v1.0',
-    formats: 'DOCX, PDF',
-  },
-];
+const THEME_MAP: Record<string, TemplateItem['iconTheme']> = {
+  blue: 'blue', amber: 'orange', orange: 'orange', rose: 'rose', emerald: 'green', green: 'green', purple: 'purple', indigo: 'purple',
+};
 
-export const CATEGORY_TABS = [
-  'All',
-  'Permission Docs',
-  'Prize Money',
-  'Submitted',
-  'Bill Summary',
-  'Bill Certificate',
-];
+export const toTemplateItem = (t: ApiTemplate): TemplateItem => ({
+  id: t.id,
+  title: t.title,
+  previewHeading: t.previewHeading,
+  description: t.description,
+  usedCount: t.usedCount,
+  category: t.category,
+  iconTheme: THEME_MAP[t.theme] ?? 'blue',
+  wireframeVariant: (['proposal-table', 'letter', 'bill-table'].includes(t.wireframeVariant) ? t.wireframeVariant : 'letter') as TemplateItem['wireframeVariant'],
+  createdBy: t.createdBy,
+  lastUpdated: t.updatedAt ? relativeTime(t.updatedAt) : '—',
+  version: t.versionLabel,
+  formats: t.formats.join(', '),
+  isMostUsed: t.isMostUsed,
+  isSystem: t.isSystem,
+});
 
 interface TemplatesViewProps {
   searchQuery: string;
+  currentUser: User;
+  /** Bump to reload the list from the API. */
+  reloadToken?: number;
   onUseTemplate: (template: TemplateItem) => void;
-  onAddTemplate?: () => void;
+  /** Called after a template was created, changed or deleted on the server. */
+  onChanged?: () => void;
 }
 
 export const TemplatesView: React.FC<TemplatesViewProps> = ({
   searchQuery,
+  currentUser,
+  reloadToken = 0,
   onUseTemplate,
-  onAddTemplate,
+  onChanged,
 }) => {
+  const isAdmin = currentUser.role === 'Club Admin';
   const [activeCategory, setActiveCategory] = useState('All');
-  const [selectedTemplateId, setSelectedTemplateId] = useState('event-proposal');
-  const [previewPage, setPreviewPage] = useState(1);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [isFullscreenModalOpen, setIsFullscreenModalOpen] = useState(false);
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [newTemplateTitle, setNewTemplateTitle] = useState('');
-  const [newTemplateCategory, setNewTemplateCategory] = useState('Permission Docs');
-  const [newTemplateDesc, setNewTemplateDesc] = useState('');
-  const [templatesList, setTemplatesList] = useState<TemplateItem[]>(TEMPLATES_DATA);
+  const [modal, setModal] = useState<null | 'create' | 'edit' | 'delete'>(null);
+  const [formTitle, setFormTitle] = useState('');
+  const [formCategory, setFormCategory] = useState('');
+  const [formDesc, setFormDesc] = useState('');
+  const [templatesList, setTemplatesList] = useState<TemplateItem[]>([]);
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [localReload, setLocalReload] = useState(0);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [detail, setDetail] = useState<ApiTemplate | null>(null);
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
+  const [previewState, setPreviewState] = useState<'idle' | 'loading' | 'error'>('idle');
 
-  const selectedTemplate =
+  // Templates come from MongoDB through GET /api/templates.
+  useEffect(() => {
+    let cancelled = false;
+    setLoadState('loading');
+    api.templates
+      .list()
+      .then((items) => {
+        if (cancelled) return;
+        setTemplatesList(items.map(toTemplateItem));
+        setLoadState('ready');
+        setLoadError(null);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setLoadState('error');
+        setLoadError(e instanceof Error ? e.message : 'Templates could not be loaded.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadToken, localReload]);
+
+  const categoryTabs = ['All', ...Array.from(new Set(templatesList.map((t) => t.category)))];
+  const selectedTemplate: TemplateItem | undefined =
     templatesList.find((t) => t.id === selectedTemplateId) || templatesList[0];
 
+  // Real field list and a real rendering of the selected template (GET /templates/{id} and /preview).
+  useEffect(() => {
+    if (!selectedTemplate) return;
+    let cancelled = false;
+    setDetail(null);
+    setPreviewHtml(null);
+    setPreviewState('loading');
+    Promise.all([api.templates.get(selectedTemplate.id), api.templates.preview(selectedTemplate.id)])
+      .then(([d, p]) => {
+        if (cancelled) return;
+        setDetail(d);
+        setPreviewHtml(p.html);
+        setPreviewState('idle');
+      })
+      .catch(() => {
+        if (!cancelled) setPreviewState('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTemplate?.id, reloadToken, localReload]);
+
   const filteredTemplates = templatesList.filter((item) => {
+    const q = searchQuery.toLowerCase();
     const matchesSearch =
-      item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.category.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCat =
-      activeCategory === 'All' || item.category === activeCategory;
+      item.title.toLowerCase().includes(q) ||
+      item.description.toLowerCase().includes(q) ||
+      item.category.toLowerCase().includes(q);
+    const matchesCat = activeCategory === 'All' || item.category === activeCategory;
     return matchesSearch && matchesCat;
   });
+
+  const flash = (m: string) => {
+    setActionNotice(m);
+    setTimeout(() => setActionNotice(null), 3500);
+  };
 
   const getIconBadgeStyle = (theme: TemplateItem['iconTheme']) => {
     switch (theme) {
@@ -298,32 +293,67 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
     }
   };
 
-  const handleCreateTemplate = (e: React.FormEvent) => {
+  const openModal = (kind: 'create' | 'edit' | 'delete') => {
+    setActionError(null);
+    if (kind === 'edit' && selectedTemplate) {
+      setFormTitle(selectedTemplate.title);
+      setFormCategory(selectedTemplate.category);
+      setFormDesc(selectedTemplate.description);
+    } else {
+      setFormTitle('');
+      setFormCategory(selectedTemplate?.category ?? '');
+      setFormDesc('');
+    }
+    setModal(kind);
+  };
+
+  // Create = a copy of the selected template under a new name (copies its layout and fields; Club Admin only).
+  // Edit = rename / re-categorise / re-describe. Delete = soft delete. Existing documents are never affected.
+  const handleSubmitModal = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTemplateTitle.trim()) return;
+    if (!selectedTemplate || !formTitle.trim()) return;
+    setSaving(true);
+    setActionError(null);
+    try {
+      if (modal === 'create') {
+        const copy = await api.templates.duplicate(selectedTemplate.id);
+        const saved = await api.templates.patch(copy.id, {
+          title: formTitle.trim(), category: formCategory.trim() || copy.category, description: formDesc.trim() || copy.description,
+        });
+        setSelectedTemplateId(saved.id);
+        flash(`Template "${saved.title}" was created.`);
+      } else if (modal === 'edit') {
+        await api.templates.patch(selectedTemplate.id, {
+          title: formTitle.trim(), category: formCategory.trim(), description: formDesc.trim(),
+        });
+        flash('Template details were saved.');
+      }
+      setModal(null);
+      setLocalReload((n) => n + 1);
+      onChanged?.();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'The change could not be saved.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
-    const newTpl: TemplateItem = {
-      id: `custom-${Date.now()}`,
-      title: newTemplateTitle.trim(),
-      previewHeading: newTemplateTitle.trim().toUpperCase(),
-      description: newTemplateDesc.trim() || 'Custom club document template for SVNIT.',
-      usedCount: 1,
-      category: newTemplateCategory,
-      iconTheme: 'blue',
-      wireframeVariant: 'proposal-table',
-      createdBy: 'Kristal Patel (Club Member)',
-      lastUpdated: 'Just now',
-      version: 'v1.0',
-      formats: 'DOCX, PDF',
-    };
-
-    setTemplatesList([newTpl, ...templatesList]);
-    setSelectedTemplateId(newTpl.id);
-    setIsAddModalOpen(false);
-    setNewTemplateTitle('');
-    setNewTemplateDesc('');
-    setActionNotice(`Template "${newTpl.title}" added successfully!`);
-    setTimeout(() => setActionNotice(null), 3000);
+  const handleDelete = async () => {
+    if (!selectedTemplate) return;
+    setSaving(true);
+    setActionError(null);
+    try {
+      await api.templates.remove(selectedTemplate.id);
+      setModal(null);
+      setSelectedTemplateId(null);
+      flash(`Template "${selectedTemplate.title}" was deleted. Documents made from it are not affected.`);
+      setLocalReload((n) => n + 1);
+      onChanged?.();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'The template could not be deleted.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -339,17 +369,17 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            if (onAddTemplate) onAddTemplate();
-            setIsAddModalOpen(true);
-          }}
-          className="bg-[#1D63DC] hover:bg-blue-700 text-white text-[13.5px] font-semibold px-4 py-2.5 rounded-xl shadow-xs flex items-center gap-2 transition-all cursor-pointer"
-        >
-          <Plus size={17} strokeWidth={2.5} />
-          <span>Add Template</span>
-        </button>
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={() => openModal('create')}
+            title="Create a new template from the selected one"
+            className="bg-[#1D63DC] hover:bg-blue-700 text-white text-[13.5px] font-semibold px-4 py-2.5 rounded-xl shadow-xs flex items-center gap-2 transition-all cursor-pointer"
+          >
+            <Plus size={17} strokeWidth={2.5} />
+            <span>Add Template</span>
+          </button>
+        )}
       </div>
 
       {actionNotice && (
@@ -368,13 +398,37 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
         </div>
       )}
 
+      {actionError && !modal && (
+        <div role="alert" className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-800 text-xs flex items-center gap-2">
+          <AlertCircle size={15} /> {actionError}
+        </div>
+      )}
+
+      {loadState === 'loading' && (
+        <div className="flex items-center gap-2 text-sm text-slate-500 py-10 justify-center">
+          <Loader2 size={18} className="animate-spin" /> Loading templates…
+        </div>
+      )}
+      {loadState === 'error' && (
+        <div role="alert" className="p-4 bg-red-50 border border-red-200 rounded-xl text-red-800 text-sm flex items-center justify-between gap-3">
+          <span className="flex items-center gap-2"><AlertCircle size={16} /> {loadError}</span>
+          <button type="button" onClick={() => setLocalReload((n) => n + 1)} className="px-3 py-1.5 bg-white border border-red-200 rounded-lg font-semibold text-xs">Try again</button>
+        </div>
+      )}
+      {loadState === 'ready' && templatesList.length === 0 && (
+        <div className="p-8 bg-white border border-slate-200 rounded-2xl text-center text-sm text-slate-500">
+          No templates yet. {isAdmin ? 'Use "Add Template" to create one.' : 'A Club Admin can add templates here.'}
+        </div>
+      )}
+
       {/* MAIN 2-COLUMN WORKSPACE: LEFT FILTER+GRID | RIGHT LIVE INSPECTOR */}
+      {loadState === 'ready' && selectedTemplate && (
       <div className="flex flex-col xl:flex-row gap-5 items-start">
         {/* LEFT COLUMN: Filter Tabs + 3x2 Cards Grid */}
         <div className="flex-1 min-w-0 w-full">
           {/* Category Filter Pills */}
           <div className="flex flex-wrap items-center gap-2 mb-4">
-            {CATEGORY_TABS.map((tab) => {
+            {categoryTabs.map((tab) => {
               const isActive = activeCategory === tab;
               return (
                 <button
@@ -393,7 +447,11 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
             })}
           </div>
 
-          {/* 3x2 Grid of Template Cards */}
+          {filteredTemplates.length === 0 && (
+            <p className="text-sm text-slate-500 py-6">No templates match your search.</p>
+          )}
+
+          {/* Grid of Template Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredTemplates.map((template) => {
               const isSelected = template.id === selectedTemplateId;
@@ -473,116 +531,25 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
 
             <button
               type="button"
-              onClick={() => setIsAddModalOpen(true)}
-              title="Upload / Import Template"
+              onClick={() => openModal('create')}
+              disabled={!isAdmin}
+              title={isAdmin ? 'Create a new template from the selected one' : 'Only a Club Admin can add templates'}
               className="p-2 rounded-xl bg-[#F8FAFC] border border-slate-200/80 text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer"
             >
               <FilePlus2 size={16} />
             </button>
           </div>
 
-          {/* A4 Document Sheet Preview Container */}
+          {/* Real rendering of the stored template (POST /templates/{id}/preview, example values) */}
           <div className="bg-[#F8FAFC] rounded-xl border border-slate-200/70 p-3">
-            <div className="relative bg-white rounded-lg shadow-sm border border-slate-200/80 px-5 pt-4 pb-5 overflow-hidden">
-              {/* Top-Right Layered Wave Ribbon */}
-              <DocumentCornerWave />
-
-              {/* Top-Left Club Header */}
-              <div className="flex items-center gap-2 relative z-10">
-                <GendocStarLogo size="sm" />
-                <div className="leading-tight">
-                  <div className="text-[11px] font-bold text-slate-900">Coding Club</div>
-                  <div className="text-[9px] text-slate-500 font-medium">SVNIT Surat</div>
-                </div>
-              </div>
-
-              {/* Document Formal Title */}
-              <h4 className="text-center font-serif font-bold text-[13px] tracking-wide text-slate-900 mt-4 mb-3 relative z-10">
-                {selectedTemplate.previewHeading}
-              </h4>
-
-              {/* Structured Dynamic Placeholders Table */}
-              <div className="border border-slate-200 rounded-md overflow-hidden text-[9.5px]">
-                {[
-                  { label: 'Event Name', value: '{{event_name}}' },
-                  { label: 'Dates', value: '{{dates}}' },
-                  { label: 'Venue', value: '{{venue}}' },
-                  { label: 'Target Audience', value: '{{target_audience}}' },
-                  {
-                    label: 'Expected Participants',
-                    value: '{{expected_participants}}',
-                  },
-                  {
-                    label: 'Organizing Club',
-                    value: 'Coding Club, SVNIT Surat',
-                  },
-                ].map((row, index) => (
-                  <div
-                    key={row.label}
-                    className={`grid grid-cols-12 items-center ${
-                      index !== 5 ? 'border-b border-slate-200/80' : ''
-                    }`}
-                  >
-                    <div className="col-span-5 bg-[#F8FAFC] px-2 py-1 font-semibold text-slate-800 border-r border-slate-200/80 truncate">
-                      {row.label}
-                    </div>
-                    <div className="col-span-7 px-2 py-1 text-slate-500 font-mono text-[8.5px] truncate">
-                      {row.value}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Section 1. Objectives */}
-              <div className="mt-3">
-                <div className="font-serif font-bold text-[10.5px] text-slate-900 mb-1">
-                  1. Objectives
-                </div>
-                <ul className="space-y-1 pl-3 text-[8.5px] text-slate-500 font-mono">
-                  <li className="flex items-center gap-2">
-                    <span>• {'{{objective_1}}'}</span>
-                    <span className="h-1.5 w-16 bg-slate-200 rounded-full inline-block" />
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <span>• {'{{objective_2}}'}</span>
-                    <span className="h-1.5 w-14 bg-slate-200 rounded-full inline-block" />
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <span>• {'{{objective_3}}'}</span>
-                    <span className="h-1.5 w-12 bg-slate-200 rounded-full inline-block" />
-                  </li>
-                </ul>
-              </div>
+            <div className="relative bg-white rounded-lg shadow-sm border border-slate-200/80 px-4 py-3 overflow-hidden h-72 overflow-y-auto">
+              {previewState === 'loading' && <div className="flex items-center gap-2 text-xs text-slate-500"><Loader2 size={14} className="animate-spin" /> Loading preview…</div>}
+              {previewState === 'error' && <p className="text-xs text-red-600">The preview could not be loaded.</p>}
+              {previewHtml && <div className="gd-page" style={{ ['--gd-font' as string]: '8.5px' }} dangerouslySetInnerHTML={{ __html: previewHtml }} />}
             </div>
-
-            {/* Preview Pagination & Fullscreen Bar */}
-            <div className="flex items-center justify-between mt-2.5 px-1 text-xs text-slate-600">
-              <div className="w-5" />
-              <div className="flex items-center gap-3 font-medium">
-                <button
-                  type="button"
-                  onClick={() => setPreviewPage((p) => Math.max(1, p - 1))}
-                  className="p-0.5 hover:text-slate-900 cursor-pointer"
-                >
-                  <ChevronLeft size={14} />
-                </button>
-                <span className="text-[11.5px] font-semibold text-slate-700">
-                  {previewPage} / 3
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setPreviewPage((p) => Math.min(3, p + 1))}
-                  className="p-0.5 hover:text-slate-900 cursor-pointer"
-                >
-                  <ChevronRight size={14} />
-                </button>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsFullscreenModalOpen(true)}
-                title="Expand Preview"
-                className="p-1 text-slate-500 hover:text-slate-800 cursor-pointer"
-              >
+            <div className="flex items-center justify-between mt-2.5 px-1 text-xs text-slate-500">
+              <span>Example values shown</span>
+              <button type="button" onClick={() => setIsFullscreenModalOpen(true)} title="Expand Preview" className="p-1 text-slate-500 hover:text-slate-800 cursor-pointer">
                 <Maximize2 size={13} />
               </button>
             </div>
@@ -605,8 +572,24 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
             </div>
           </div>
 
-          {/* Action Buttons: Use Template | Edit Template */}
-          <div className="grid grid-cols-2 gap-2.5 mt-4">
+          {detail?.fields && (
+            <div className="mt-3.5">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">
+                Information needed ({detail.fields.filter((f) => f.required).length} required)
+              </div>
+              <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                {detail.fields.filter((f) => f.required).map((f) => (
+                  <span key={f.key} title={f.official ? 'Official detail: comes from you, never from the AI' : undefined}
+                    className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[11px] font-medium">
+                    {f.label}{f.official ? ' ·official' : ''}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Action Buttons */}
+          <div className={`grid ${isAdmin ? 'grid-cols-2' : 'grid-cols-1'} gap-2.5 mt-4`}>
             <button
               type="button"
               onClick={() => onUseTemplate(selectedTemplate)}
@@ -615,18 +598,22 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
               <FileText size={14} />
               <span>Use Template</span>
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setActionNotice(`Opening editor for ${selectedTemplate.title}...`);
-                setTimeout(() => setActionNotice(null), 2500);
-              }}
-              className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-200/90 text-[12.5px] font-semibold py-2.5 px-3 rounded-xl flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <Pencil size={14} />
-              <span>Edit Template</span>
-            </button>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => openModal('edit')}
+                className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-200/90 text-[12.5px] font-semibold py-2.5 px-3 rounded-xl flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <Pencil size={14} />
+                <span>Edit Details</span>
+              </button>
+            )}
           </div>
+          {isAdmin && (
+            <button type="button" onClick={() => openModal('delete')} className="mt-2 w-full text-[12px] font-semibold text-red-600 hover:bg-red-50 rounded-xl py-2 flex items-center justify-center gap-1.5">
+              <Trash2 size={13} /> Delete template
+            </button>
+          )}
 
           {/* Metadata Table */}
           <div className="mt-4 pt-3.5 border-t border-slate-100 space-y-2 text-[12px]">
@@ -649,9 +636,10 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
           </div>
         </aside>
       </div>
+      )}
 
       {/* FULLSCREEN PREVIEW MODAL */}
-      {isFullscreenModalOpen && (
+      {isFullscreenModalOpen && selectedTemplate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/65 backdrop-blur-sm p-4 overflow-y-auto">
           <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-2xl overflow-hidden animate-fadeIn flex flex-col">
             <div className="px-6 py-4 bg-[#0B132B] text-white flex items-center justify-between">
@@ -669,49 +657,8 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
             </div>
 
             <div className="p-8 bg-slate-100 overflow-y-auto max-h-[75vh]">
-              <div className="relative bg-white rounded-xl shadow-md border border-slate-200 p-8 text-slate-800 leading-relaxed overflow-hidden">
-                <DocumentCornerWave />
-                <div className="flex items-center gap-2 mb-4">
-                  <GendocStarLogo size="md" />
-                  <div>
-                    <h2 className="text-sm font-bold text-slate-950 uppercase">Coding Club</h2>
-                    <p className="text-xs text-blue-700 font-semibold">SVNIT Surat Student Chapter</p>
-                  </div>
-                </div>
-
-                <h1 className="text-center font-serif font-bold text-lg text-slate-900 underline underline-offset-4 my-4">
-                  {selectedTemplate.previewHeading}
-                </h1>
-
-                <div className="border border-slate-300 rounded-lg overflow-hidden text-xs my-4">
-                  {[
-                    { label: 'Event Name', value: '{{event_name}}' },
-                    { label: 'Dates & Duration', value: '{{dates}}' },
-                    { label: 'Venue Allocation', value: '{{venue}}' },
-                    { label: 'Target Audience', value: '{{target_audience}}' },
-                    { label: 'Expected Participants', value: '{{expected_participants}}' },
-                    { label: 'Organizing Body', value: 'Coding Club, SVNIT Surat' },
-                  ].map((row, i) => (
-                    <div
-                      key={row.label}
-                      className={`grid grid-cols-12 ${i !== 5 ? 'border-b border-slate-200' : ''}`}
-                    >
-                      <div className="col-span-5 bg-slate-50 px-3 py-2 font-semibold text-slate-800 border-r border-slate-200">
-                        {row.label}
-                      </div>
-                      <div className="col-span-7 px-3 py-2 font-mono text-slate-600 bg-white">
-                        {row.value}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="mt-6 space-y-2 text-xs">
-                  <h3 className="font-serif font-bold text-sm text-slate-900">1. Objectives & Scope</h3>
-                  <p className="font-mono text-slate-600 pl-3">• {'{{objective_1}}'}</p>
-                  <p className="font-mono text-slate-600 pl-3">• {'{{objective_2}}'}</p>
-                  <p className="font-mono text-slate-600 pl-3">• {'{{objective_3}}'}</p>
-                </div>
+              <div className="bg-white rounded-xl shadow-md border border-slate-200 p-8">
+                {previewHtml ? <div className="gd-page" style={{ ['--gd-font' as string]: '13px' }} dangerouslySetInnerHTML={{ __html: previewHtml }} /> : <p className="text-sm text-slate-500">Preview unavailable.</p>}
               </div>
             </div>
 
@@ -738,85 +685,65 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
         </div>
       )}
 
-      {/* ADD TEMPLATE MODAL */}
-      {isAddModalOpen && (
+      {/* CREATE / EDIT / DELETE TEMPLATE (Club Admin) */}
+      {modal && selectedTemplate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/65 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden animate-fadeIn">
+          <div role="dialog" aria-modal="true" className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden animate-fadeIn">
             <div className="px-6 py-4 bg-[#0B132B] text-white flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <FilePlus2 size={18} className="text-blue-400" />
-                <h3 className="font-bold text-base">Add New Club Template</h3>
+                <h3 className="font-bold text-base">
+                  {modal === 'create' ? 'Add a new template' : modal === 'edit' ? 'Edit template details' : 'Delete template'}
+                </h3>
               </div>
-              <button
-                type="button"
-                onClick={() => setIsAddModalOpen(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white"
-              >
+              <button type="button" onClick={() => !saving && setModal(null)} aria-label="Close" className="p-1 rounded-lg text-slate-400 hover:text-white">
                 <X size={18} />
               </button>
             </div>
 
-            <form onSubmit={handleCreateTemplate} className="p-6 space-y-4 text-xs">
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  Template Title
-                </label>
-                <input
-                  type="text"
-                  value={newTemplateTitle}
-                  onChange={(e) => setNewTemplateTitle(e.target.value)}
-                  placeholder="e.g. Workshop Sponsorship Proposal"
-                  required
-                  className="w-full border border-slate-200 rounded-xl px-3.5 py-2 text-slate-800 text-xs focus:outline-none focus:border-blue-500"
-                />
+            {modal === 'delete' ? (
+              <div className="p-6 space-y-4 text-sm">
+                <p>Delete <strong>{selectedTemplate.title}</strong>? It disappears from the Templates page. Documents already created from it are kept.</p>
+                {actionError && <p role="alert" className="text-red-600 text-xs">{actionError}</p>}
+                <div className="flex justify-end gap-2">
+                  <button type="button" disabled={saving} onClick={() => setModal(null)} className="px-4 py-2 text-slate-600 font-semibold text-xs">Cancel</button>
+                  <button type="button" disabled={saving} onClick={() => void handleDelete()} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-xl text-xs disabled:opacity-60">
+                    {saving ? 'Deleting…' : 'Delete'}
+                  </button>
+                </div>
               </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  Category
-                </label>
-                <select
-                  value={newTemplateCategory}
-                  onChange={(e) => setNewTemplateCategory(e.target.value)}
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-slate-800 text-xs focus:outline-none focus:border-blue-500"
-                >
-                  <option value="Permission Docs">Permission Docs</option>
-                  <option value="Prize Money">Prize Money</option>
-                  <option value="Submitted">Submitted</option>
-                  <option value="Bill Summary">Bill Summary</option>
-                  <option value="Bill Certificate">Bill Certificate</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  Description
-                </label>
-                <textarea
-                  value={newTemplateDesc}
-                  onChange={(e) => setNewTemplateDesc(e.target.value)}
-                  placeholder="Brief summary of what this template is used for..."
-                  rows={3}
-                  className="w-full border border-slate-200 rounded-xl px-3.5 py-2 text-slate-800 text-xs focus:outline-none focus:border-blue-500 resize-none"
-                />
-              </div>
-
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsAddModalOpen(false)}
-                  className="px-4 py-2 text-slate-600 hover:text-slate-800 font-semibold"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-[#1D63DC] hover:bg-blue-700 text-white font-semibold rounded-xl"
-                >
-                  Save Template
-                </button>
-              </div>
-            </form>
+            ) : (
+              <form onSubmit={(e) => void handleSubmitModal(e)} className="p-6 space-y-4 text-xs">
+                {modal === 'create' && (
+                  <p className="text-slate-500">
+                    The new template starts as a copy of <strong>{selectedTemplate.title}</strong> (same layout and fields) so it is ready to use.
+                  </p>
+                )}
+                <div>
+                  <label htmlFor="tpl-title" className="block font-semibold text-slate-700 mb-1">Template title</label>
+                  <input id="tpl-title" type="text" value={formTitle} onChange={(e) => setFormTitle(e.target.value)} required maxLength={80}
+                    className="w-full border border-slate-200 rounded-xl px-3.5 py-2 text-slate-800 text-xs focus:outline-none focus:border-blue-500" />
+                </div>
+                <div>
+                  <label htmlFor="tpl-cat" className="block font-semibold text-slate-700 mb-1">Category</label>
+                  <input id="tpl-cat" list="tpl-cats" value={formCategory} onChange={(e) => setFormCategory(e.target.value)} required maxLength={40}
+                    className="w-full border border-slate-200 rounded-xl px-3.5 py-2 text-slate-800 text-xs focus:outline-none focus:border-blue-500" />
+                  <datalist id="tpl-cats">{categoryTabs.filter((c) => c !== 'All').map((c) => <option key={c} value={c} />)}</datalist>
+                </div>
+                <div>
+                  <label htmlFor="tpl-desc" className="block font-semibold text-slate-700 mb-1">Description</label>
+                  <textarea id="tpl-desc" value={formDesc} onChange={(e) => setFormDesc(e.target.value)} rows={3} maxLength={400}
+                    className="w-full border border-slate-200 rounded-xl px-3.5 py-2 text-slate-800 text-xs focus:outline-none focus:border-blue-500 resize-none" />
+                </div>
+                {actionError && <p role="alert" className="text-red-600">{actionError}</p>}
+                <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
+                  <button type="button" disabled={saving} onClick={() => setModal(null)} className="px-4 py-2 text-slate-600 hover:text-slate-800 font-semibold">Cancel</button>
+                  <button type="submit" disabled={saving} className="px-4 py-2 bg-[#1D63DC] hover:bg-blue-700 text-white font-semibold rounded-xl disabled:opacity-60">
+                    {saving ? 'Saving…' : modal === 'create' ? 'Create template' : 'Save changes'}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

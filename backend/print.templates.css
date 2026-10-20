@@ -1,0 +1,10 @@
+/* PROPOSED ADDITIONS to the shared print.css (backend owner keeps that file).
+   Only classes/elements the built-in templates use. Paste, don't replace. */
+.page-break { break-after: page; border: 0; height: 0; margin: 0; }
+table { width: 100%; border-collapse: collapse; margin: 6pt 0; }
+th, td { border: 0.75pt solid #444; padding: 4pt 6pt; vertical-align: top; text-align: left; }
+thead th { background: #eef2f7; }
+tr { break-inside: avoid; }
+table.sig-table, table.sig-table td { border: 0; }
+table.sig-table td { width: 50%; padding: 18pt 6pt 6pt; }
+.field-empty { background: #fff3cd; color: #7a5b00; }   /* preview only */

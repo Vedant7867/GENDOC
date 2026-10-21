@@ -35,6 +35,24 @@ def build_router(get_llm, db_dep, caller) -> APIRouter:
         need_creator(who)
         return await service.freeform(db, who, get_llm(), body.prompt)
 
+    @r.get("/status")
+    async def status(who=Depends(caller)):
+        """Is the AI configured? (No network call.) The UI/ops can use this to explain why AI features are off."""
+        try:
+            llm = get_llm()
+        except TemplateError as e:
+            return {"configured": False, "problem": e.message}
+        return {"configured": True, "provider": type(llm).__name__, "model": getattr(llm, "model", None)}
+
+    @r.post("/status/test")
+    async def status_test(who=Depends(caller)):
+        """One tiny real call to the provider (Club Admin only) to prove the key and model work."""
+        if who.role != "Club Admin":
+            raise TemplateError(403, "forbidden", "Only a Club Admin can test the AI connection")
+        llm = get_llm()
+        await service.ping(llm)
+        return {"ok": True, "provider": type(llm).__name__, "model": getattr(llm, "model", None)}
+
     @r.post("/copilot")
     async def copilot(body: CopilotBody, who=Depends(caller), db=DB):
         need_creator(who)

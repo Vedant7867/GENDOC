@@ -287,9 +287,8 @@ export const DocumentEditorView: React.FC<Props> = ({ documentId, initialTitle, 
         proposals: r.proposals.map((p) => ({ p, status: 'pending' as const, snap })),
       }]);
     } catch (e) {
-      const m = e instanceof ApiError && e.code === 'llm_unavailable'
-        ? 'The AI assistant is not set up on this server yet. Everything else in the editor still works.'
-        : e instanceof Error ? e.message : 'The assistant could not answer.';
+      // Show the server's real reason (missing key, rejected key, unknown model, rate limit...) instead of a vague message.
+      const m = e instanceof Error ? e.message : 'The assistant could not answer.';
       setChat((c) => [...c, { id: ++msgId.current, role: 'error', text: m }]);
     } finally {
       setAsking(false);

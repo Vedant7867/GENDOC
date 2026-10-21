@@ -134,3 +134,9 @@ async def copilot(db, who: Caller, llm: LLM, body) -> dict:
         raise TemplateError(422, "validation_error", "This document is too long for the assistant; select a section instead.")
     sel = body.selection.model_dump() if body.selection else None
     return await _llm_call(run_copilot(llm, body.instruction, blocks, sel))
+
+
+async def ping(llm: LLM) -> None:
+    res = await _llm_call(llm.complete_json("Reply with JSON only.", 'Return exactly {"ok": true}', max_tokens=50))
+    if not isinstance(res, dict):
+        raise TemplateError(502, "llm_error", "The AI answered, but not in the expected format.")

@@ -81,36 +81,77 @@ class GeminiLLM:
         self.client = genai.Client(api_key=self.api_key)
         self.model = model or os.getenv("GENDOC_LLM_MODEL") or self.DEFAULT_MODEL
 
-    async def complete_json(self, system: str, user: str, *, max_tokens: int = 2000) -> dict:
-        from google.genai import errors, types
+    async def list_models(self) -> list[str]:
+        """Models this key can call for text generation (names without the 'models/' prefix)."""
+        out: list[str] = []
+        pager = await self.client.aio.models.list()
+        async for m in pager:
+            if "generateContent" in (getattr(m, "supported_actions", None) or []):
+                out.append((m.name or "").removeprefix("models/"))
+        return out
 
-        config = types.GenerateContentConfig(
-            system_instruction=system,
-            response_mime_type="application/json",
-            temperature=0,
-            max_output_tokens=max_tokens * 2 + 1024,  # headroom: reasoning models count thinking tokens too
-        )
-        try:
-            resp = await self.client.aio.models.generate_content(model=self.model, contents=user, config=config)
-        except errors.APIError as e:
-            code = getattr(e, "code", None)
-            msg = _scrub(str(getattr(e, "message", "") or e), self.api_key)
-            if code in (401, 403) or (code == 400 and "api key" in msg.lower()):
-                raise LLMAuthError("The Gemini API key was rejected. Check GEMINI_API_KEY on the server.") from None
-            if code == 429:
-                raise LLMRateLimited("The AI service is rate limited right now. Wait a moment and try again.") from None
-            if code == 404:
-                raise LLMModelUnavailable(
-                    f"The Gemini model '{self.model}' is not available. Set GENDOC_LLM_MODEL to a supported model.") from None
-            if code and code >= 500:
-                raise LLMError("The Gemini service is temporarily unavailable. Please try again.") from None
-            raise LLMError(f"The Gemini request failed ({code}): {msg}") from None
-        except Exception as e:  # network, timeout, SDK internals
-            raise LLMError(f"Could not reach the Gemini service ({type(e).__name__}).") from None
-        text = getattr(resp, "text", None)
-        if not text:
+    @staticmethod
+    def _best(models: list[str]) -> str | None:
+        """Prefer a current general-purpose Flash model, then any Flash, then anything."""
+        plain = [m for m in models if "flash" in m and not any(x in m for x in ("lite", "image", "tts", "live", "audio", "thinking"))]
+        for pool in (sorted((m for m in plain if "preview" not in m and "exp" not in m), reverse=True),
+                     sorted(plain, reverse=True), sorted(models, reverse=True)):
+            if pool:
+                return pool[0]
+        return None
+
+    async def _generate(self, system: str, user: str, max_out: int):
+        from google.genai import types
+
+        config = types.GenerateContentConfig(system_instruction=system, response_mime_type="application/json",
+                                             temperature=0, max_output_tokens=max_out)
+        return await self.client.aio.models.generate_content(model=self.model, contents=user, config=config)
+
+    def _map(self, e: Exception) -> LLMError:
+        code = getattr(e, "code", None)
+        msg = _scrub(str(getattr(e, "message", "") or e), self.api_key)
+        if code in (401, 403) or (code == 400 and "api key" in msg.lower()):
+            return LLMAuthError("The Gemini API key was rejected. Check GEMINI_API_KEY on the server.")
+        if code == 429:
+            return LLMRateLimited("The AI service is rate limited right now (free keys have low limits). Wait a minute and try again.")
+        if code == 404:
+            return LLMModelUnavailable(f"The Gemini model '{self.model}' is not available for this key. Set GENDOC_LLM_MODEL to a supported model.")
+        if code and code >= 500:
+            return LLMError("The Gemini service is temporarily unavailable. Please try again.")
+        return LLMError(f"The Gemini request failed ({code}): {msg}")
+
+    async def complete_json(self, system: str, user: str, *, max_tokens: int = 2000) -> dict:
+        from google.genai import errors
+
+        max_out = max_tokens * 2 + 1024  # headroom: reasoning models count thinking tokens too
+        switched = False
+        for attempt in range(3):
+            try:
+                resp = await self._generate(system, user, max_out)
+            except errors.APIError as e:
+                mapped = self._map(e)
+                if isinstance(mapped, LLMModelUnavailable) and not switched:
+                    # The default model may have been retired or renamed: ask the API what this key can use.
+                    switched = True
+                    try:
+                        found = self._best(await self.list_models())
+                    except Exception:
+                        found = None
+                    if found and found != self.model:
+                        self.model = found
+                        continue
+                raise mapped from None
+            except Exception as e:  # network, timeout, SDK internals
+                raise LLMError(f"Could not reach the Gemini service ({type(e).__name__}).") from None
+            text = getattr(resp, "text", None)
+            if text:
+                return parse_json(text)
+            reason = str(getattr((getattr(resp, "candidates", None) or [None])[0], "finish_reason", "") or "")
+            if "MAX_TOKENS" in reason and attempt < 2:
+                max_out *= 3  # the answer was cut off (thinking used the budget): retry with more room
+                continue
             raise LLMBadOutput("Gemini returned no text (the request may have been blocked). Try rephrasing.")
-        return parse_json(text)
+        raise LLMBadOutput("Gemini did not return a usable answer. Please try again.")
 
 
 class AnthropicLLM:

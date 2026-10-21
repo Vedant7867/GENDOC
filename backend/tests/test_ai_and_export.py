@@ -202,3 +202,74 @@ async def test_pdf_export_and_ai_draft_block(db):
         did2 = await make_doc(c, h, '<p><span data-ai="draft">AI text</span></p>')
         blocked = await c.get(f"/api/documents/{did2}/export?format=pdf", headers=h)
     assert blocked.status_code == 409 and blocked.json()["error"]["code"] == "unaccepted_ai_text"
+
+
+# ---------------------------------------------------------------- "Gemini does not work": recovery and diagnosis
+async def test_retired_default_model_is_replaced_by_one_the_key_can_use():
+    from google.genai import errors
+
+    llm = llmmod.GeminiLLM(api_key="k", model="gemini-retired")
+    used = []
+
+    async def gen(model, contents, config):
+        used.append(model)
+        if model == "gemini-retired":
+            raise errors.ClientError(404, {"error": {"code": 404, "message": "model not found", "status": "NOT_FOUND"}})
+        return types.SimpleNamespace(text='{"ok": true}')
+
+    async def listing():
+        async def it():
+            for n, a in (("models/embedding-001", ["embedContent"]), ("models/gemini-2.5-flash-lite", ["generateContent"]),
+                         ("models/gemini-3-flash", ["generateContent"]), ("models/gemini-2.5-flash", ["generateContent"])):
+                yield types.SimpleNamespace(name=n, supported_actions=a)
+        return it()
+
+    llm.client = types.SimpleNamespace(aio=types.SimpleNamespace(models=types.SimpleNamespace(generate_content=gen, list=listing)))
+    assert await llm.complete_json("s", "u") == {"ok": True}
+    assert used == ["gemini-retired", "gemini-3-flash"] and llm.model == "gemini-3-flash"  # newest plain Flash, not lite/embedding
+
+
+async def test_truncated_answer_is_retried_with_more_room():
+    llm = llmmod.GeminiLLM(api_key="k", model="m")
+    sizes = []
+
+    async def gen(model, contents, config):
+        sizes.append(config.max_output_tokens)
+        if len(sizes) == 1:
+            return types.SimpleNamespace(text=None, candidates=[types.SimpleNamespace(finish_reason="MAX_TOKENS")])
+        return types.SimpleNamespace(text='{"a": 1}')
+
+    llm.client = types.SimpleNamespace(aio=types.SimpleNamespace(models=types.SimpleNamespace(generate_content=gen)))
+    assert await llm.complete_json("s", "u", max_tokens=100) == {"a": 1}
+    assert sizes[1] == sizes[0] * 3
+
+
+async def test_status_endpoints_explain_what_is_wrong(db, monkeypatch):
+    for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY", "GENDOC_LLM_PROVIDER"):
+        monkeypatch.delenv(k, raising=False)
+    app = create_app(db=db)  # nothing configured
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        h = await login(c, "member")
+        s = (await c.get("/api/generator/status", headers=h)).json()
+        assert s["configured"] is False and "GEMINI_API_KEY" in s["problem"]
+        assert (await c.post("/api/generator/status/test", headers=h)).status_code == 403  # admin only
+        ha = await login(c, "admin")
+        r = await c.post("/api/generator/status/test", headers=ha)
+        assert r.status_code == 503 and r.json()["error"]["code"] == "llm_unavailable"
+    app2 = create_app(db=db, llm=FakeLLM({"ok": True}))
+    async with AsyncClient(transport=ASGITransport(app=app2), base_url="http://t") as c:
+        ha = await login(c, "admin")
+        assert (await c.post("/api/generator/status/test", headers=ha)).json()["ok"] is True
+
+
+def test_env_file_is_found_from_any_working_directory(tmp_path, monkeypatch):
+    import app.config as cfg
+
+    env = tmp_path / "backend.env"
+    env.write_text("GEMINI_API_KEY=from-the-env-file\nGENDOC_LLM_MODEL=my-model\n")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)  # a different folder than backend/
+    monkeypatch.setitem(cfg.Settings.model_config, "env_file", (".env", str(env)))
+    s = cfg.Settings()
+    assert s.gemini_api_key == "from-the-env-file" and s.gendoc_llm_model == "my-model"
+    assert str(cfg._BACKEND_ENV).endswith("backend/.env") or str(cfg._BACKEND_ENV).endswith("backend\\.env")
